@@ -12,10 +12,7 @@
 
   get_argument_definitions/2,
   get_argument_type/1,
-  get_argument_default/1,
-
-  check_type/2
-
+  get_argument_default/1
 ]).
 
 get_name(ObjectType)->
