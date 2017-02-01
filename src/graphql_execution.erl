@@ -101,6 +101,7 @@ tryGetNonNullableValue(VariableName, VariableValues, CoercedValues0, DefaultValu
   end.
 
 tryGetValue(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) ->
+  print("DefaultValue: ~p", [DefaultValue]),
   case maps:find(VariableName, VariableValues) of
     NullOrError when NullOrError =:= error orelse NullOrError =:= {ok, null} ->
       case DefaultValue of
@@ -178,8 +179,12 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
     DefaultValue = graphql_schema:get_argument_default(ArgumentDefinition),
 
     % 5 of http://facebook.github.io/graphql/#sec-Coercing-Field-Arguments
-    Value = get_field_argument_by_name(ArgumentName, ArgumentValues),
-
+    Value = case ArgumentValues of
+      null ->
+        #{};
+      _ ->
+        get_field_argument_by_name(ArgumentName, ArgumentValues)
+    end,
     case Value of
       #{<<"name">> := VariableName, <<"type">> := <<"Variable">>} ->
         case ArgumentType of
@@ -191,9 +196,9 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
       #{} ->
         case ArgumentType of
           {not_null, Type} ->
-            tryGetNonNullableValue(ArgumentName, #{}, CoercedValues, DefaultValue, Type);
+            tryGetNonNullableValue(ArgumentName, ArgumentValues, CoercedValues, DefaultValue, Type);
           {allow_null, Type} ->
-            tryGetValue(ArgumentName, #{}, CoercedValues, DefaultValue, Type)
+            tryGetValue(ArgumentName, ArgumentValues, CoercedValues, DefaultValue, Type)
         end
     end
   end, #{}, ArgumentDefinitions).
@@ -202,6 +207,8 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
   case lists:filtermap(fun(X) ->
     case X of
       #{<<"value">> := #{<<"name">> := #{<<"value">> := ArgumentName}}} ->
+        {true, X};
+      #{<<"name">> := #{<<"value">> := ArgumentName }} ->
         {true, X};
       _ ->
         false
@@ -212,7 +219,7 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
     [#{<<"value">> := Value}] ->
       #{
         <<"type">> => maps:get(<<"kind">>, Value),
-        <<"name">> => maps:get(<<"value">>, maps:get(<<"name">>, Value))
+        <<"name">> => ArgumentName
       }
   end.
 
