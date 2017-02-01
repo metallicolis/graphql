@@ -64,6 +64,10 @@ coerceVariableValues(Schema, Operation, VariableValues)->
 
 coerce_value_type(#{<<"kind">> := <<"IntValue">>, <<"value">> := Value})->
   binary_to_integer(Value);
+coerce_value_type(#{<<"kind">> := <<"ListValue">>, <<"values">> := Value})->
+  lists:map(fun(L) ->
+    binary_to_integer(maps:get(<<"value">>, L))
+    end, Value);
 coerce_value_type(#{<<"kind">> := <<"StringValue">>, <<"value">> := Value})->
   Value;
 coerce_value_type(#{<<"kind">> := <<"BooleanValue">>, <<"value">> := Value})
@@ -104,7 +108,8 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
             throw({error, args_validation, ErrorMsg});
 
           % if validation passed - let CoercedValue be NotCheckedCoercedValue - because it checked :)
-          true -> Value
+          true ->
+            Value
         end;
 
       % f. Otherwise, if value does not exist (was not provided in argumentValues:
