@@ -81,11 +81,12 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions
                        Value;
                      Value -> Value
                    end,
-    try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, VariableType)
+    Result = try_get_value(VariableName, VariableValues, DefaultValue, VariableType),
+    CoercedValues0#{VariableName => Result}
   end, #{}, VariableDefinitions),
   CoercedValues.
 
-try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) ->
+try_get_value(VariableName, VariableValues, DefaultValue, Type) ->
   case maps:find(VariableName, VariableValues) of
     error ->
       case DefaultValue of
@@ -95,10 +96,10 @@ try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) 
               ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
               throw({error, args_validation, ErrorMsg});
             _ ->
-              CoercedValues0#{VariableName => undefined}
+              undefined
           end;
         Value ->
-          CoercedValues0#{VariableName => Value}
+          Value
       end;
     {ok, Value} ->
       Type0 = case Type of
@@ -110,10 +111,10 @@ try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) 
         T ->
           T
       end,
-      check_value_type(Value, Type0, VariableName, CoercedValues0)
+      check_value_type(Value, Type0, VariableName)
   end.
 
-check_value_type(Value, Type, VariableName, CoercedValues0) ->
+check_value_type(Value, Type, VariableName) ->
   case Type of
     integer ->
       case Value of
@@ -122,7 +123,7 @@ check_value_type(Value, Type, VariableName, CoercedValues0) ->
           throw({error, args_validation, ErrorMsg});
         Value ->
           Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
-          check_type(Value0, fun erlang:is_integer/1, VariableName, CoercedValues0, <<"Integer">>)
+          check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Integer">>)
       end;
     float ->
       case Value of
@@ -131,12 +132,12 @@ check_value_type(Value, Type, VariableName, CoercedValues0) ->
           throw({error, args_validation, ErrorMsg});
         Value ->
           Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
-          check_type(Value0, fun erlang:is_integer/1, VariableName, CoercedValues0, <<"Float">>)
+          check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Float">>)
       end;
     boolean ->
-      check_type(Value, fun erlang:is_boolean/1, VariableName, CoercedValues0, <<"Bool">>);
+      check_type(Value, fun erlang:is_boolean/1, VariableName, <<"Bool">>);
     string ->
-      check_type(Value, fun erlang:is_binary/1, VariableName, CoercedValues0, <<"String">>);
+      check_type(Value, fun erlang:is_binary/1, VariableName, <<"String">>);
     UnsuportedType ->
       ErrorMsg = <<"Unsupported type: ", UnsuportedType/binary, " of the variable ", VariableName/binary>>,
       throw({error, args_validation, ErrorMsg})
@@ -177,10 +178,10 @@ what_is_binary_number(Value) ->
       end
   end.
 
-check_type(Value, Fun, VariableName, CoercedValues0, Type) ->
+check_type(Value, Fun, VariableName, Type) ->
   case Fun(Value) of
     true ->
-      CoercedValues0#{VariableName => Value};
+      Value;
     false ->
       ErrorMsg = <<"Variable '", VariableName/binary, "' must be ", Type/binary>>,
       throw({error, args_validation, ErrorMsg})
@@ -204,14 +205,15 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
       _ ->
         get_field_argument_by_name(ArgumentName, ArgumentValues)
     end,
-    case Value of
+    Result = case Value of
       #{<<"name">> := VariableName} ->
-        try_get_value(VariableName, VariableValues, CoercedValues, DefaultValue, ArgumentType);
+        try_get_value(VariableName, VariableValues, DefaultValue, ArgumentType);
       #{<<"type">> := <<"Argument">>} ->
-        try_get_value(ArgumentName, Value, CoercedValues, DefaultValue, ArgumentType);
+        try_get_value(ArgumentName, Value, DefaultValue, ArgumentType);
       #{} ->
-        try_get_value(ArgumentName, #{}, CoercedValues, DefaultValue, ArgumentType)
-    end
+        try_get_value(ArgumentName, #{}, DefaultValue, ArgumentType)
+    end,
+    CoercedValues#{ArgumentName => Result}
   end, #{}, ArgumentDefinitions).
 
 get_field_argument_by_name(ArgumentName, ArgumentValues)->
