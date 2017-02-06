@@ -17,11 +17,20 @@ query() ->
       type => string,
       description => <<"This is hello world field">>
     },
+    <<"nn_arg">> => #{
+      type => {object, fun arg/0},
+      args => #{
+        <<"nn_id">> => #{type => [not_null, integer]}
+      },
+      description => <<"Not Null Argument schema">>,
+      resolver => fun(_, Args) -> Args end
+    },
     <<"arg">> => #{
       type => {object, fun arg/0},
       args => #{
         <<"hello">> => #{ type => string, default => <<"default value">> },
-        <<"argument">> => #{ type => string, default => <<"Default argument value">>}
+        <<"argument">> => #{ type => string, default => <<"Default argument value">>},
+        <<"id">> => #{type => integer}
       },
       description => <<"Argument schema">>,
       resolver => fun(_, Args) -> Args end
@@ -76,6 +85,14 @@ arg()->
       type => srtring,
       description => <<"Proxy hello argument to response">>,
       resolver => fun(Obj, _) -> maps:get(<<"hello">>, Obj, undefined) end
+    },
+    <<"id">> => #{
+      type => integer,
+      resolver => fun(Obj, _) -> maps:get(<<"id">>, Obj, undefined) end
+    },
+    <<"nn_id">> => #{
+      type => [not_null, integer],
+      resolver => fun(Obj, _) -> maps:get(<<"nn_id">>, Obj, undefined) end
     },
     <<"argument">> => #{
       type => string,

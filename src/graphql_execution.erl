@@ -6,6 +6,13 @@
   execute/6
 ]).
 
+-define(CONVERT_TYPE, #{
+  <<"Integer">> => integer,
+  <<"String">> => string,
+  <<"Boolean">> => boolean,
+  <<"Float">> => float
+}).
+
 print(Text)-> print(Text, []).
 print(Text, Args) -> io:format(Text ++ "~n", Args).
 
@@ -65,101 +72,112 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions
     VariableName = maps:get(<<"value">>, maps:get(<<"name">>, maps:get(<<"variable">>, Variable))),
     VariableType = case Variable of
                      #{<<"type">> := #{<<"kind">> := <<"NonNullType">>, <<"type">> := Type0}} ->
-
-                       #{
-                         <<"kind">> => <<"NonNullType">>,
-                         <<"type">> => maps:get(<<"value">>, maps:get(<<"name">>, Type0))
-                       };
+                       [not_null, maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)];
                      #{<<"type">> := Type0} ->
-                       #{
-                         <<"kind">> => <<"NamedType">>,
-                         <<"type">> => maps:get(<<"value">>, maps:get(<<"name">>, Type0))
-                       }
+                       maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)
                    end,
-    DefaultValue = maps:get(<<"defaultValue">>, Variable),
-    case VariableType of
-      #{<<"kind">> := <<"NonNullType">>, <<"type">> := Type} ->
-        tryGetNonNullableValue(VariableName, VariableValues, CoercedValues0, DefaultValue, Type);
-      #{<<"kind">> := _, <<"type">> := Type} ->
-        tryGetValue(VariableName, VariableValues, CoercedValues0, DefaultValue, Type)
-    end
+    DefaultValue = case maps:get(<<"defaultValue">>, Variable) of
+                     #{<<"value">> := Value} ->
+                       Value;
+                     Value -> Value
+                   end,
+    try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, VariableType)
   end, #{}, VariableDefinitions),
   CoercedValues.
 
-tryGetNonNullableValue(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) ->
+try_get_value(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) ->
   case maps:find(VariableName, VariableValues) of
-    NullOrError when NullOrError =:= error orelse NullOrError =:= {ok, null} ->
+    error ->
       case DefaultValue of
+        undefined ->
+          case Type of
+            [not_null, _] ->
+              ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
+              throw({error, args_validation, ErrorMsg});
+            _ ->
+              CoercedValues0#{VariableName => undefined}
+          end;
+        Value ->
+          CoercedValues0#{VariableName => Value}
+      end;
+    {ok, Value} ->
+      Type0 = case Type of
+        [not_null, _] when Value =:= null ->
+          ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
+          throw({error, args_validation, ErrorMsg});
+        [not_null, T] ->
+          T;
+        T ->
+          T
+      end,
+      check_value_type(Value, Type0, VariableName, CoercedValues0)
+  end.
+
+check_value_type(Value, Type, VariableName, CoercedValues0) ->
+  case Type of
+    integer ->
+      case Value of
         null ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "' can't be null">>,
+          ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null, must be Integer">>,
           throw({error, args_validation, ErrorMsg});
         Value ->
-          checkValueType(Value, Type, VariableName, CoercedValues0)
+          Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
+          check_type(Value0, fun erlang:is_integer/1, VariableName, CoercedValues0, <<"Integer">>)
       end;
-    {ok, Value} ->
-      checkValueType(Value, Type, VariableName, CoercedValues0)
-  end.
-
-tryGetValue(VariableName, VariableValues, CoercedValues0, DefaultValue, Type) ->
-  print("DefaultValue: ~p", [DefaultValue]),
-  case maps:find(VariableName, VariableValues) of
-    NullOrError when NullOrError =:= error orelse NullOrError =:= {ok, null} ->
-      case DefaultValue of
+    float ->
+      case Value of
         null ->
-          CoercedValues0#{VariableName => null};
+          ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null,  must be Float">>,
+          throw({error, args_validation, ErrorMsg});
         Value ->
-          checkValueType(Value, Type, VariableName, CoercedValues0)
+          Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
+          check_type(Value0, fun erlang:is_integer/1, VariableName, CoercedValues0, <<"Float">>)
       end;
-    {ok, Value} ->
-      checkValueType(Value, Type, VariableName, CoercedValues0)
-  end.
-
-checkValueType(Value, Type, VariableName, CoercedValues0) ->
-  case Type of
-    <<"Integer">> ->
-      Value0 = tryParseInteger(Value, VariableName),
-      checkType(Value0, fun erlang:is_integer/1, VariableName, CoercedValues0, <<"Integer">>);
-    <<"Bool">> ->
-      checkType(Value, fun erlang:is_boolean/1, VariableName, CoercedValues0, <<"Bool">>);
-    <<"String">> ->
-      checkType(Value, fun erlang:is_binary/1, VariableName, CoercedValues0, <<"String">>);
-    <<"Float">> ->
-      Value0 = tryParseFloat(Value, VariableName),
-      checkType(Value, fun erlang:is_float/1, VariableName, CoercedValues0, <<"String">>);
+    boolean ->
+      check_type(Value, fun erlang:is_boolean/1, VariableName, CoercedValues0, <<"Bool">>);
+    string ->
+      check_type(Value, fun erlang:is_binary/1, VariableName, CoercedValues0, <<"String">>);
     UnsuportedType ->
       ErrorMsg = <<"Unsupported type: ", UnsuportedType/binary, " of the variable ", VariableName/binary>>,
       throw({error, args_validation, ErrorMsg})
   end.
 
-tryParseInteger(Value, VariableName) ->
-  case is_integer(Value) of
+try_parse_numeric(Value, VariableName, Type) ->
+  case is_number(Value) of
     true ->
       Value;
     false ->
-      case string:to_integer(binary_to_list(Value)) of
-        {error, no_integer} ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "' must be Integer">>,
-          throw({error, args_validation, ErrorMsg});
-        {Int, _Rest} ->
-          Int
+      case what_is_binary_number(Value) of
+        float ->
+          binary_to_float(Value);
+        integer ->
+          binary_to_integer(Value);
+        not_number ->
+          ErrorMsg = <<"Variable '", VariableName/binary, "' must be ", Type/binary>>,
+          throw({error, args_validation, ErrorMsg})
       end
   end.
 
-tryParseFloat(Value, VariableName) ->
-  case is_float(Value) of
-    true ->
-      Value;
-    false ->
-      case string:to_float(binary_to_list(Value)) of
-        {error, no_integer} ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "' must be Integer">>,
-          throw({error, args_validation, ErrorMsg});
-        {Int, _Rest} ->
-          Int
+what_is_binary_number(Value) ->
+  Result = binary:split(Value, <<".">>),
+  case Result of
+    [F, L] ->
+      case {re:run(F, "^[0-9]*$"), re:run(L, "^[0-9]*$")} of
+        {{match, _}, {match, _}} ->
+          float;
+        _ ->
+          not_number
+      end;
+    [I] ->
+      case re:run(I, "^[0-9]*$") of
+        {match, _} ->
+          integer;
+        _ ->
+          not_number
       end
   end.
 
-checkType(Value, Fun, VariableName, CoercedValues0, Type) ->
+check_type(Value, Fun, VariableName, CoercedValues0, Type) ->
   case Fun(Value) of
     true ->
       CoercedValues0#{VariableName => Value};
@@ -171,6 +189,7 @@ checkType(Value, Fun, VariableName, CoercedValues0, Type) ->
 
 % TODO: complete me http://facebook.github.io/graphql/#CoerceArgumentValues()
 coerceArgumentValues(ObjectType, Field, VariableValues) ->
+  print("~p: VariableValues: ~p", [?LINE, VariableValues]),
   ArgumentValues = maps:get(<<"arguments">>, Field),
   FieldName = get_field_name(Field),
   ArgumentDefinitions = graphql_schema:get_argument_definitions(FieldName, ObjectType),
@@ -186,25 +205,17 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
         get_field_argument_by_name(ArgumentName, ArgumentValues)
     end,
     case Value of
-      #{<<"name">> := VariableName, <<"type">> := <<"Variable">>} ->
-        case ArgumentType of
-          {not_null, Type} ->
-            tryGetNonNullableValue(VariableName, VariableValues, CoercedValues, DefaultValue, Type);
-          {allow_null, Type} ->
-            tryGetValue(VariableName, VariableValues, CoercedValues, DefaultValue, Type)
-        end;
+      #{<<"name">> := VariableName} ->
+        try_get_value(VariableName, VariableValues, CoercedValues, DefaultValue, ArgumentType);
+      #{<<"type">> := <<"Argument">>} ->
+        try_get_value(ArgumentName, Value, CoercedValues, DefaultValue, ArgumentType);
       #{} ->
-        case ArgumentType of
-          {not_null, Type} ->
-            tryGetNonNullableValue(ArgumentName, ArgumentValues, CoercedValues, DefaultValue, Type);
-          {allow_null, Type} ->
-            tryGetValue(ArgumentName, ArgumentValues, CoercedValues, DefaultValue, Type)
-        end
+        try_get_value(ArgumentName, #{}, CoercedValues, DefaultValue, ArgumentType)
     end
   end, #{}, ArgumentDefinitions).
 
 get_field_argument_by_name(ArgumentName, ArgumentValues)->
-  case lists:filtermap(fun(X) ->
+  Res = lists:filtermap(fun(X) ->
     case X of
       #{<<"value">> := #{<<"name">> := #{<<"value">> := ArgumentName}}} ->
         {true, X};
@@ -213,14 +224,14 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
       _ ->
         false
     end
-  end, ArgumentValues) of
+  end, ArgumentValues),
+  case Res of
     [] ->
       #{};
-    [#{<<"value">> := Value}] ->
-      #{
-        <<"type">> => maps:get(<<"kind">>, Value),
-        <<"name">> => ArgumentName
-      }
+    [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"value">> := Value}}] ->
+      #{<<"type">> => <<"Argument">>, ArgumentName => Value};
+    [#{<<"value">> := #{<<"kind">> := <<"Variable">>}}] ->
+      #{<<"name">> => ArgumentName}
   end.
 
 
@@ -267,7 +278,7 @@ execute_selection_set(SelectionSet, ObjectType, ObjectValue, VariableValues, Con
 
   end,
 
-  case Parallel of
+  case false of
     true -> graphql:upmap(MapFun, GroupedFieldSet, 5000);
     false -> lists:map(MapFun, GroupedFieldSet)
   end.
@@ -328,9 +339,9 @@ completeValue(FieldType, Fields, Result, VariablesValues, Context)->
       case is_list(Result) of
         false -> throw({error, result_validation, <<"Non list result for list field type">>});
         true ->
-          graphql:upmap_ordered(fun(ResultItem) ->
+          lists:map(fun(ResultItem) ->
             completeValue(InnerType, Fields, ResultItem, VariablesValues, Context)
-          end, Result, 5000)
+          end, Result)
       end;
     {object, ObjectTypeFun} ->
       ObjectType = ObjectTypeFun(),
