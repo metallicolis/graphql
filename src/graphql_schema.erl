@@ -70,4 +70,4 @@ get_argument_type(ArgumentDefinition) ->
   maps:get(type, ArgumentDefinition).
 
 get_argument_default(ArgumentDefinition) ->
-  maps:get(default, ArgumentDefinition, undefined).
+  maps:get(default, ArgumentDefinition, null).

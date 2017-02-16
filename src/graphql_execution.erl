@@ -69,37 +69,48 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := null}, _VariableVal
   #{};
 coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions}, VariableValues)->
   CoercedValues = lists:foldl(fun(Variable, CoercedValues0) ->
-    VariableName = maps:get(<<"value">>, maps:get(<<"name">>, maps:get(<<"variable">>, Variable))),
+    VariableName = coerce_variable_values_get_variable_name(Variable),
+    print("~p: Variable: ~p", [?LINE, Variable]),
     VariableType = case Variable of
                      #{<<"type">> := #{<<"kind">> := <<"NonNullType">>, <<"type">> := Type0}} ->
                        [not_null, maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)];
+                     #{<<"type">> := #{<<"kind">> := <<"ListType">>}} ->
+                       <<"ListType">>;
                      #{<<"type">> := Type0} ->
                        maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)
                    end,
-    DefaultValue = case maps:get(<<"defaultValue">>, Variable) of
-                     #{<<"value">> := Value} ->
-                       Value;
-                     Value -> Value
+    DefaultValueAndType = case maps:get(<<"defaultValue">>, Variable) of
+                     null ->
+                       null;
+                     #{<<"value">> := Value, <<"kind">> := Type} ->
+                       {Value, Type}
                    end,
-    Result = try_get_value(VariableName, VariableValues, DefaultValue, VariableType),
-    CoercedValues0#{VariableName => Result}
+    case get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, VariableType) of
+      no_result ->
+        CoercedValues0#{};
+      Result ->
+        CoercedValues0#{VariableName => Result}
+    end
   end, #{}, VariableDefinitions),
   CoercedValues.
 
-try_get_value(VariableName, VariableValues, DefaultValue, Type) ->
+coerce_variable_values_get_variable_name(#{<<"variable">> := #{<<"name">> := #{<<"value">> := Value}}}) ->
+  Value.
+
+get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, Type) ->
   case maps:find(VariableName, VariableValues) of
     error ->
-      case DefaultValue of
-        undefined ->
+      case DefaultValueAndType of
+        {Value, _Type} ->
+          Value;
+        null ->
           case Type of
             [not_null, _] ->
               ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
               throw({error, args_validation, ErrorMsg});
             _ ->
-              undefined
-          end;
-        Value ->
-          Value
+              no_result
+          end
       end;
     {ok, Value} ->
       Type0 = case Type of
@@ -111,10 +122,10 @@ try_get_value(VariableName, VariableValues, DefaultValue, Type) ->
         T ->
           T
       end,
-      check_value_type(Value, Type0, VariableName)
+      check_variable_type(Value, Type0, VariableName)
   end.
 
-check_value_type(Value, Type, VariableName) ->
+check_variable_type(Value, Type, VariableName) ->
   case Type of
     integer ->
       case Value of
@@ -122,7 +133,7 @@ check_value_type(Value, Type, VariableName) ->
           ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null, must be Integer">>,
           throw({error, args_validation, ErrorMsg});
         Value ->
-          Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
+          Value0 = parse_numeric(Value, VariableName, integer),
           check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Integer">>)
       end;
     float ->
@@ -131,50 +142,44 @@ check_value_type(Value, Type, VariableName) ->
           ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null,  must be Float">>,
           throw({error, args_validation, ErrorMsg});
         Value ->
-          Value0 = try_parse_numeric(Value, VariableName, <<"integer">>),
-          check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Float">>)
+          Value0 = parse_numeric(Value, VariableName, float),
+          check_type(Value0, fun erlang:is_float/1, VariableName, <<"Float">>)
       end;
     boolean ->
       check_type(Value, fun erlang:is_boolean/1, VariableName, <<"Bool">>);
     string ->
       check_type(Value, fun erlang:is_binary/1, VariableName, <<"String">>);
-    UnsuportedType ->
-      ErrorMsg = <<"Unsupported type: ", UnsuportedType/binary, " of the variable ", VariableName/binary>>,
+    [_] ->
+      [];
+    _UnsuportedType ->
+      ErrorMsg = <<"Unsupported type of the variable ", VariableName/binary>>,
       throw({error, args_validation, ErrorMsg})
   end.
 
-try_parse_numeric(Value, VariableName, Type) ->
+parse_numeric(Value, VariableName, Type) ->
   case is_number(Value) of
     true ->
       Value;
     false ->
-      case what_is_binary_number(Value) of
+      case Type of
         float ->
-          binary_to_float(Value);
+          try binary_to_float(Value) of
+            Value0 ->
+              Value0
+            catch
+              error:_ ->
+                ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Float">>,
+                throw({error, args_validation, ErrorMsg})
+          end;
         integer ->
-          binary_to_integer(Value);
-        not_number ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "' must be ", Type/binary>>,
-          throw({error, args_validation, ErrorMsg})
-      end
-  end.
-
-what_is_binary_number(Value) ->
-  Result = binary:split(Value, <<".">>),
-  case Result of
-    [F, L] ->
-      case {re:run(F, "^[0-9]*$"), re:run(L, "^[0-9]*$")} of
-        {{match, _}, {match, _}} ->
-          float;
-        _ ->
-          not_number
-      end;
-    [I] ->
-      case re:run(I, "^[0-9]*$") of
-        {match, _} ->
-          integer;
-        _ ->
-          not_number
+          try binary_to_integer(Value) of
+            Value0 ->
+              Value0
+          catch
+            error:_ ->
+              ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Integer">>,
+              throw({error, args_validation, ErrorMsg})
+          end
       end
   end.
 
@@ -190,7 +195,6 @@ check_type(Value, Fun, VariableName, Type) ->
 
 % TODO: complete me http://facebook.github.io/graphql/#CoerceArgumentValues()
 coerceArgumentValues(ObjectType, Field, VariableValues) ->
-  print("~p: VariableValues: ~p", [?LINE, VariableValues]),
   ArgumentValues = maps:get(<<"arguments">>, Field),
   FieldName = get_field_name(Field),
   ArgumentDefinitions = graphql_schema:get_argument_definitions(FieldName, ObjectType),
@@ -207,14 +211,39 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
     end,
     Result = case Value of
       #{<<"name">> := VariableName} ->
-        try_get_value(VariableName, VariableValues, DefaultValue, ArgumentType);
+        get_and_check_argument_value(VariableName, VariableValues, DefaultValue, ArgumentType);
       #{<<"type">> := <<"Argument">>} ->
-        try_get_value(ArgumentName, Value, DefaultValue, ArgumentType);
+        get_and_check_argument_value(ArgumentName, Value, DefaultValue, ArgumentType);
       #{} ->
-        try_get_value(ArgumentName, #{}, DefaultValue, ArgumentType)
+        get_and_check_argument_value(ArgumentName, #{}, DefaultValue, ArgumentType)
     end,
     CoercedValues#{ArgumentName => Result}
   end, #{}, ArgumentDefinitions).
+
+get_and_check_argument_value(VariableName, VariableValues, DefaultValue, ArgumentType) ->
+  Type = case ArgumentType of
+           [not_null, T] ->
+             T;
+           T ->
+             T
+         end,
+  case maps:find(VariableName, VariableValues) of
+    {ok, Value} ->
+      check_variable_type(Value, Type, VariableName);
+    error ->
+      case DefaultValue of
+        null ->
+          case ArgumentType of
+            [not_null, _] ->
+              ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
+              throw({error, args_validation, ErrorMsg});
+            _ ->
+              null
+          end;
+        Value ->
+          check_variable_type(Value, Type, VariableName)
+      end
+  end.
 
 get_field_argument_by_name(ArgumentName, ArgumentValues)->
   Res = lists:filtermap(fun(X) ->
