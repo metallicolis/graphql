@@ -22,6 +22,7 @@ execute(Schema, Document, OperationName, VariableValues, InitialValue, Context)-
     Result -> Result
   catch
     {error, Type, Msg} ->
+      print("Error in ~p! Msg: ~p", [Type, Msg]),
       #{error => Msg, type => Type}
   end.
 
