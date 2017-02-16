@@ -105,7 +105,7 @@ invalid_argument_type_test() ->
       id
     }
   }">>,
-  ?assertEqual(#{error => <<"Variable 'id' must be integer">>, type => args_validation},
+  ?assertEqual(#{error => <<"Variable 'id' isn't Integer">>, type => args_validation},
     graphql:execute(graphql_test_schema:schema_root(), Document, #{})).
 
 not_null_variable_test() ->
@@ -131,13 +131,13 @@ query_variables_test() ->
 
 query_variables_not_provided_test() ->
   Document = <<"
-  query($id: Integer) {
+  query($id: Integer!) {
     arg(id: $id){
       id
     }
   }">>,
   ?assertEqual(
-    #{error => <<"Variable 'id'can't be null, must be Integer">>, type => args_validation},
+    #{error => <<"Variable: 'id' can't be null">>, type => args_validation},
     graphql:execute(graphql_test_schema:schema_root(), Document, #{})).
 %%default_resolver_must_pass_own_arguments_to_child_test() ->
 %%  Document = <<"{
