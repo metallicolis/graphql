@@ -256,11 +256,17 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
         false
     end
   end, ArgumentValues),
+  print("~p: Res: ~p", [?LINE, Res]),
   case Res of
     [] ->
       #{};
     [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"value">> := Value}}] ->
       #{<<"type">> => <<"Argument">>, ArgumentName => Value};
+    [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"values">> := Values}}] ->
+      Values0 = lists:map(fun(V) ->
+        maps:get(<<"value">>, V)
+      end, Values),
+      #{<<"type">> => <<"Argument">>, ArgumentName => Values0};
     [#{<<"value">> := #{<<"kind">> := <<"Variable">>}}] ->
       #{<<"name">> => ArgumentName}
   end.
