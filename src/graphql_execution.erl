@@ -71,12 +71,12 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := null}, _VariableVal
 coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions}, VariableValues)->
   CoercedValues = lists:foldl(fun(Variable, CoercedValues0) ->
     VariableName = coerce_variable_values_get_variable_name(Variable),
-    print("~p: Variable: ~p", [?LINE, Variable]),
     VariableType = case Variable of
                      #{<<"type">> := #{<<"kind">> := <<"NonNullType">>, <<"type">> := Type0}} ->
                        [not_null, maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)];
-                     #{<<"type">> := #{<<"kind">> := <<"ListType">>}} ->
-                       <<"ListType">>;
+                     #{<<"type">> := #{<<"kind">> := <<"ListType">>,
+                       <<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}}} ->
+                       {list, maps:get(TypeName, ?CONVERT_TYPE)};
                      #{<<"type">> := Type0} ->
                        maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)
                    end,
@@ -126,62 +126,48 @@ get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, Type) 
       check_variable_type(Value, Type0, VariableName)
   end.
 
-check_variable_type(Value, Type, VariableName) ->
-  case Type of
-    integer ->
-      case Value of
-        null ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null, must be Integer">>,
-          throw({error, args_validation, ErrorMsg});
-        Value ->
-          Value0 = parse_numeric(Value, VariableName, integer),
-          check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Integer">>)
-      end;
-    float ->
-      case Value of
-        null ->
-          ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null,  must be Float">>,
-          throw({error, args_validation, ErrorMsg});
-        Value ->
-          Value0 = parse_numeric(Value, VariableName, float),
-          check_type(Value0, fun erlang:is_float/1, VariableName, <<"Float">>)
-      end;
-    boolean ->
-      check_type(Value, fun erlang:is_boolean/1, VariableName, <<"Bool">>);
-    string ->
-      check_type(Value, fun erlang:is_binary/1, VariableName, <<"String">>);
-    [_] ->
-      [];
-    _UnsuportedType ->
-      ErrorMsg = <<"Unsupported type of the variable ", VariableName/binary>>,
-      throw({error, args_validation, ErrorMsg})
-  end.
 
-parse_numeric(Value, VariableName, Type) ->
-  case is_number(Value) of
-    true ->
-      Value;
-    false ->
-      case Type of
-        float ->
-          try binary_to_float(Value) of
-            Value0 ->
-              Value0
-            catch
-              error:_ ->
-                ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Float">>,
-                throw({error, args_validation, ErrorMsg})
-          end;
-        integer ->
-          try binary_to_integer(Value) of
-            Value0 ->
-              Value0
-          catch
-            error:_ ->
-              ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Integer">>,
-              throw({error, args_validation, ErrorMsg})
-          end
-      end
+check_variable_type(null, _Type, VariableName) ->
+  ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null">>,
+  throw({error, args_validation, ErrorMsg});
+check_variable_type(Value, integer, VariableName) ->
+  Value0 = parse_numeric(Value, VariableName, integer),
+  check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Integer">>);
+check_variable_type(Value, float, VariableName) ->
+  Value0 = parse_numeric(Value, VariableName, float),
+  check_type(Value0, fun erlang:is_float/1, VariableName, <<"Float">>);
+check_variable_type(Value, boolean, VariableName) ->
+  check_type(Value, fun erlang:is_boolean/1, VariableName, <<"Bool">>);
+check_variable_type(Value, string, VariableName) ->
+  check_type(Value, fun erlang:is_binary/1, VariableName, <<"String">>);
+check_variable_type(Value, {list, Type}, VariableName) ->
+  lists:map(fun(V) ->
+    check_variable_type(V, Type, VariableName)
+    end, Value);
+check_variable_type(_Value, Type, VariableName) ->
+  print("~p: Type: ~p", [?LINE, Type]),
+  ErrorMsg = <<"Unsupported type for variable ", VariableName/binary>>,
+  throw({error, args_validation, ErrorMsg}).
+
+parse_numeric(Value, _VariableName, _Type) when is_number(Value)->
+  Value;
+parse_numeric(Value, VariableName, integer) ->
+  try binary_to_integer(Value) of
+    Value0 ->
+      Value0
+  catch
+    error:_ ->
+      ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Integer">>,
+      throw({error, args_validation, ErrorMsg})
+  end;
+parse_numeric(Value, VariableName, float) ->
+  try binary_to_float(Value) of
+    Value0 ->
+      Value0
+  catch
+    error:_ ->
+      ErrorMsg = <<"Variable '", VariableName/binary, "' isn't Float">>,
+      throw({error, args_validation, ErrorMsg})
   end.
 
 check_type(Value, Fun, VariableName, Type) ->
@@ -200,7 +186,12 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
   FieldName = get_field_name(Field),
   ArgumentDefinitions = graphql_schema:get_argument_definitions(FieldName, ObjectType),
   maps:fold(fun(ArgumentName, ArgumentDefinition, CoercedValues) ->
-    ArgumentType = graphql_schema:get_argument_type(ArgumentDefinition),
+    ArgumentType = case graphql_schema:get_argument_type(ArgumentDefinition) of
+                     [Type] ->
+                       {list, Type};
+                     Type ->
+                       Type
+                   end,
     DefaultValue = graphql_schema:get_argument_default(ArgumentDefinition),
 
     % 5 of http://facebook.github.io/graphql/#sec-Coercing-Field-Arguments
