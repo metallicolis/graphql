@@ -80,12 +80,20 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions
                      #{<<"type">> := Type0} ->
                        maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)
                    end,
+    print("~p: Variable: ~p", [?LINE, Variable]),
     DefaultValueAndType = case maps:get(<<"defaultValue">>, Variable) of
                      null ->
                        null;
+                     #{<<"kind">> := <<"ListValue">>, <<"values">> := Values} ->
+                       Type =
+                       Values0 = lists:map(fun(V) ->
+                         maps:get(<<"value">>, V)
+                       end, Values),
+                       {Values0, VariableType};
                      #{<<"value">> := Value, <<"kind">> := Type} ->
                        {Value, Type}
                    end,
+    print("~p: DefaultValueAndType: ~p", [?LINE, DefaultValueAndType]),
     case get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, VariableType) of
       no_result ->
         CoercedValues0#{};
