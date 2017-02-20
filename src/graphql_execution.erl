@@ -274,7 +274,8 @@ execute_query(Query, Schema, VariableValues, InitialValue, Context) ->
   QueryType = maps:get(query, Schema),
   SelectionSet = maps:get(<<"selectionSet">>, Query),
 %%  Data = execute_selection_set(SelectionSet, QueryType, InitialValue, VariableValues, Context),
-  {T, Data} = timer:tc(fun execute_selection_set/6, [SelectionSet, QueryType, InitialValue, VariableValues, Context, true]),
+  Parallel = false,
+  {T, Data} = timer:tc(fun execute_selection_set/6, [SelectionSet, QueryType, InitialValue, VariableValues, Context, Parallel]),
   io:format("EXECUTE SELECTION SET TIMER: ~p~n", [T]),
   #{
     data => Data,
@@ -378,10 +379,13 @@ completeValue(FieldType, Fields, Result, VariablesValues, Context)->
           end, Result)
       end;
     {object, ObjectTypeFun} ->
-      ObjectType = ObjectTypeFun(),
-      SubSelectionSet = mergeSelectionSet(Fields),
-      execute_selection_set(#{<<"selections">> => SubSelectionSet}, ObjectType, Result, VariablesValues, Context);
-
+      case Result of
+        null -> null;
+        _ ->
+          ObjectType = ObjectTypeFun(),
+          SubSelectionSet = mergeSelectionSet(Fields),
+          execute_selection_set(#{<<"selections">> => SubSelectionSet}, ObjectType, Result, VariablesValues, Context)
+      end;
     _ -> Result
   end.
 
