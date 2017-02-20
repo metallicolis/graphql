@@ -20,7 +20,7 @@ query() ->
     <<"nn_arg">> => #{
       type => {object, fun arg/0},
       args => #{
-        <<"nn_id">> => #{type => [not_null, integer]}
+        <<"nn_id">> => #{type => {not_null, integer}}
       },
       description => <<"Not Null Argument schema">>,
       resolver => fun(_, Args) -> Args end
@@ -91,7 +91,7 @@ arg()->
       resolver => fun(Obj, _) -> maps:get(<<"id">>, Obj, undefined) end
     },
     <<"nn_id">> => #{
-      type => [not_null, integer],
+      type => {not_null, integer},
       resolver => fun(Obj, _) -> maps:get(<<"nn_id">>, Obj, undefined) end
     },
     <<"argument">> => #{

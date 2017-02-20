@@ -212,12 +212,10 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
     % 5 of http://facebook.github.io/graphql/#sec-Coercing-Field-Arguments
     Value = case ArgumentValues of
       null ->
-        #{};
+        [];
       _ ->
         get_field_argument_by_name(ArgumentName, ArgumentValues)
     end,
-    print("~p: ArgumentName : ~p", [?LINE, ArgumentName]),
-    print("~p: Value : ~p", [?LINE, Value]),
     Result = case Value of
       [] ->
         get_and_check_argument_value(ArgumentName, #{}, DefaultValue, ArgumentType);
@@ -235,7 +233,6 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
   end, #{}, ArgumentDefinitions).
 
 get_and_check_argument_value(ArgumentName, VariableValues, DefaultValue, ArgumentType) ->
-  print("~p: VariableValues: ~p", [?LINE, VariableValues]),
   Type = case ArgumentType of
            {not_null, T} ->
              T;
