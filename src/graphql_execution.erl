@@ -61,34 +61,31 @@ get_operation_from_definitions([_|Tail], OperationName, Operation)->
 % TODO: implement me http://facebook.github.io/graphql/#CoerceVariableValues()
 coerceVariableValues(_Schema, #{<<"variableDefinitions">> := null}, _VariableValues)->
   #{};
-coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions}, VariableValues)->
+coerceVariableValues(_Schema, #{variableDefinitions := VariableDefinitions}, VariableValues)->
   CoercedValues = lists:foldl(fun(Variable, CoercedValues0) ->
     VariableName = coerce_variable_values_get_variable_name(Variable),
-    print("~p: Variable: ~p", [?LINE, Variable]),
     VariableType = case Variable of
-                     #{<<"type">> := #{<<"kind">> := <<"NonNullType">>,
-                       <<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}}} ->
+                     #{type := #{kind := 'NonNullType'},
+                       type := #{name := #{value := TypeName}}} ->
                        {not_null, get_variable_type(TypeName)};
-                     #{<<"type">> := #{<<"kind">> := <<"ListType">>,
-                       <<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}}} ->
+                     #{type := #{kind := 'ListType',
+                       type := #{name := #{value := TypeName}}}} ->
                        {list, get_variable_type(TypeName)};
-                     #{<<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}} ->
+                     #{type := #{name := #{value := TypeName}}} ->
                        get_variable_type(TypeName)
                    end,
-    print("~p: Variable: ~p", [?LINE, Variable]),
-    DefaultValueAndType = case maps:get(<<"defaultValue">>, Variable) of
+    DefaultValueAndType = case maps:get(defaultValue, Variable, null) of
                      null ->
                        null;
-                     #{<<"kind">> := <<"ListValue">>, <<"values">> := Values} ->
+                     #{kind := 'ListValue', values := Values} ->
                        Type =
                        Values0 = lists:map(fun(V) ->
-                         maps:get(<<"value">>, V)
+                         maps:get(value, V)
                        end, Values),
                        {Values0, VariableType};
-                     #{<<"value">> := Value, <<"kind">> := Type} ->
+                     #{value := Value, kind := Type} ->
                        {Value, Type}
                    end,
-    print("~p: DefaultValueAndType: ~p", [?LINE, DefaultValueAndType]),
     case get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, VariableType) of
       no_result ->
         CoercedValues0#{};
@@ -110,7 +107,7 @@ get_variable_type(Type) ->
       float
   end.
 
-coerce_variable_values_get_variable_name(#{<<"variable">> := #{<<"name">> := #{<<"value">> := Value}}}) ->
+coerce_variable_values_get_variable_name(#{variable := #{name := #{value := Value}}}) ->
   Value.
 
 get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, Type) ->
@@ -197,7 +194,7 @@ check_type(Value, Fun, VariableName, Type) ->
 
 % TODO: complete me http://facebook.github.io/graphql/#CoerceArgumentValues()
 coerceArgumentValues(ObjectType, Field, VariableValues) ->
-  ArgumentValues = maps:get(<<"arguments">>, Field),
+  ArgumentValues = maps:get(arguments, Field, null),
   FieldName = get_field_name(Field),
   ArgumentDefinitions = graphql_schema:get_argument_definitions(FieldName, ObjectType),
   maps:fold(fun(ArgumentName, ArgumentDefinition, CoercedValues) ->
@@ -219,14 +216,14 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
     Result = case Value of
       [] ->
         get_and_check_argument_value(ArgumentName, #{}, DefaultValue, ArgumentType);
-      [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"value">> := Value0}}] ->
+      [#{name := #{value := ArgumentName}, value := #{value := Value0}}] ->
         get_and_check_argument_value(ArgumentName, #{ArgumentName => Value0}, DefaultValue, ArgumentType);
-      [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"values">> := Values}}] ->
+      [#{name := #{value := ArgumentName}, value := #{values := Values}}] ->
         Values0 = lists:map(fun(V) ->
-          maps:get(<<"value">>, V)
+          maps:get(value, V)
         end, Values),
         get_and_check_argument_value(ArgumentName, #{ArgumentName => Values0}, DefaultValue, ArgumentType);
-      [#{<<"value">> := #{<<"kind">> := <<"Variable">>}}] ->
+      [#{value := #{kind := 'Variable'}}] ->
         get_and_check_argument_value(ArgumentName, VariableValues, DefaultValue, ArgumentType)
     end,
     CoercedValues#{ArgumentName => Result}
@@ -260,9 +257,9 @@ get_and_check_argument_value(ArgumentName, VariableValues, DefaultValue, Argumen
 get_field_argument_by_name(ArgumentName, ArgumentValues)->
   lists:filtermap(fun(X) ->
     case X of
-      #{<<"value">> := #{<<"name">> := #{<<"value">> := ArgumentName}}} ->
+      #{value := #{name := #{value := ArgumentName}}} ->
         {true, X};
-      #{<<"name">> := #{<<"value">> := ArgumentName }} ->
+      #{name := #{value := ArgumentName }} ->
         {true, X};
       _ ->
         false
