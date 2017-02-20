@@ -6,13 +6,6 @@
   execute/6
 ]).
 
--define(CONVERT_TYPE, #{
-  <<"Integer">> => integer,
-  <<"String">> => string,
-  <<"Boolean">> => boolean,
-  <<"Float">> => float
-}).
-
 print(Text)-> print(Text, []).
 print(Text, Args) -> io:format(Text ++ "~n", Args).
 
@@ -71,14 +64,16 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := null}, _VariableVal
 coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions}, VariableValues)->
   CoercedValues = lists:foldl(fun(Variable, CoercedValues0) ->
     VariableName = coerce_variable_values_get_variable_name(Variable),
+    print("~p: Variable: ~p", [?LINE, Variable]),
     VariableType = case Variable of
-                     #{<<"type">> := #{<<"kind">> := <<"NonNullType">>, <<"type">> := Type0}} ->
-                       [not_null, maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)];
+                     #{<<"type">> := #{<<"kind">> := <<"NonNullType">>,
+                       <<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}}} ->
+                       {not_null, get_variable_type(TypeName)};
                      #{<<"type">> := #{<<"kind">> := <<"ListType">>,
                        <<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}}} ->
-                       {list, maps:get(TypeName, ?CONVERT_TYPE)};
-                     #{<<"type">> := Type0} ->
-                       maps:get(maps:get(<<"value">>, maps:get(<<"name">>, Type0)), ?CONVERT_TYPE)
+                       {list, get_variable_type(TypeName)};
+                     #{<<"type">> := #{<<"name">> := #{<<"value">> := TypeName}}} ->
+                       get_variable_type(TypeName)
                    end,
     print("~p: Variable: ~p", [?LINE, Variable]),
     DefaultValueAndType = case maps:get(<<"defaultValue">>, Variable) of
@@ -103,6 +98,18 @@ coerceVariableValues(_Schema, #{<<"variableDefinitions">> := VariableDefinitions
   end, #{}, VariableDefinitions),
   CoercedValues.
 
+get_variable_type(Type) ->
+  case Type of
+    <<"Integer">> ->
+      integer;
+    <<"String">> ->
+      string;
+    <<"Boolean">> ->
+      boolean;
+    <<"Float">> ->
+      float
+  end.
+
 coerce_variable_values_get_variable_name(#{<<"variable">> := #{<<"name">> := #{<<"value">> := Value}}}) ->
   Value.
 
@@ -114,7 +121,7 @@ get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, Type) 
           Value;
         null ->
           case Type of
-            [not_null, _] ->
+            {not_null, _} ->
               ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
               throw({error, args_validation, ErrorMsg});
             _ ->
@@ -123,36 +130,36 @@ get_and_check_variable(VariableName, VariableValues, DefaultValueAndType, Type) 
       end;
     {ok, Value} ->
       Type0 = case Type of
-        [not_null, _] when Value =:= null ->
+        {not_null, _} when Value =:= null ->
           ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
           throw({error, args_validation, ErrorMsg});
-        [not_null, T] ->
+        {not_null, T} ->
           T;
         T ->
           T
       end,
-      check_variable_type(Value, Type0, VariableName)
+      check_variable_or_argument_type(Value, Type0, VariableName)
   end.
 
 
-check_variable_type(null, _Type, VariableName) ->
+check_variable_or_argument_type(null, _Type, VariableName) ->
   ErrorMsg = <<"Variable '", VariableName/binary, "'can't be null">>,
   throw({error, args_validation, ErrorMsg});
-check_variable_type(Value, integer, VariableName) ->
+check_variable_or_argument_type(Value, integer, VariableName) ->
   Value0 = parse_numeric(Value, VariableName, integer),
   check_type(Value0, fun erlang:is_integer/1, VariableName, <<"Integer">>);
-check_variable_type(Value, float, VariableName) ->
+check_variable_or_argument_type(Value, float, VariableName) ->
   Value0 = parse_numeric(Value, VariableName, float),
   check_type(Value0, fun erlang:is_float/1, VariableName, <<"Float">>);
-check_variable_type(Value, boolean, VariableName) ->
+check_variable_or_argument_type(Value, boolean, VariableName) ->
   check_type(Value, fun erlang:is_boolean/1, VariableName, <<"Bool">>);
-check_variable_type(Value, string, VariableName) ->
+check_variable_or_argument_type(Value, string, VariableName) ->
   check_type(Value, fun erlang:is_binary/1, VariableName, <<"String">>);
-check_variable_type(Value, {list, Type}, VariableName) ->
+check_variable_or_argument_type(Value, {list, Type}, VariableName) ->
   lists:map(fun(V) ->
-    check_variable_type(V, Type, VariableName)
+    check_variable_or_argument_type(V, Type, VariableName)
     end, Value);
-check_variable_type(_Value, Type, VariableName) ->
+check_variable_or_argument_type(_Value, Type, VariableName) ->
   print("~p: Type: ~p", [?LINE, Type]),
   ErrorMsg = <<"Unsupported type for variable ", VariableName/binary>>,
   throw({error, args_validation, ErrorMsg}).
@@ -209,44 +216,52 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
       _ ->
         get_field_argument_by_name(ArgumentName, ArgumentValues)
     end,
+    print("~p: ArgumentName : ~p", [?LINE, ArgumentName]),
+    print("~p: Value : ~p", [?LINE, Value]),
     Result = case Value of
-      #{<<"name">> := VariableName} ->
-        get_and_check_argument_value(VariableName, VariableValues, DefaultValue, ArgumentType);
-      #{<<"type">> := <<"Argument">>} ->
-        get_and_check_argument_value(ArgumentName, Value, DefaultValue, ArgumentType);
-      #{} ->
-        get_and_check_argument_value(ArgumentName, #{}, DefaultValue, ArgumentType)
+      [] ->
+        get_and_check_argument_value(ArgumentName, #{}, DefaultValue, ArgumentType);
+      [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"value">> := Value0}}] ->
+        get_and_check_argument_value(ArgumentName, #{ArgumentName => Value0}, DefaultValue, ArgumentType);
+      [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"values">> := Values}}] ->
+        Values0 = lists:map(fun(V) ->
+          maps:get(<<"value">>, V)
+        end, Values),
+        get_and_check_argument_value(ArgumentName, #{ArgumentName => Values0}, DefaultValue, ArgumentType);
+      [#{<<"value">> := #{<<"kind">> := <<"Variable">>}}] ->
+        get_and_check_argument_value(ArgumentName, VariableValues, DefaultValue, ArgumentType)
     end,
     CoercedValues#{ArgumentName => Result}
   end, #{}, ArgumentDefinitions).
 
-get_and_check_argument_value(VariableName, VariableValues, DefaultValue, ArgumentType) ->
+get_and_check_argument_value(ArgumentName, VariableValues, DefaultValue, ArgumentType) ->
+  print("~p: VariableValues: ~p", [?LINE, VariableValues]),
   Type = case ArgumentType of
-           [not_null, T] ->
+           {not_null, T} ->
              T;
            T ->
              T
          end,
-  case maps:find(VariableName, VariableValues) of
+  case maps:find(ArgumentName, VariableValues) of
     {ok, Value} ->
-      check_variable_type(Value, Type, VariableName);
+      check_variable_or_argument_type(Value, Type, ArgumentName);
     error ->
       case DefaultValue of
         null ->
           case ArgumentType of
-            [not_null, _] ->
-              ErrorMsg = <<"Variable: '", VariableName/binary, "' can't be null">>,
+            {not_null, _} ->
+              ErrorMsg = <<"Variable: '", ArgumentName/binary, "' can't be null">>,
               throw({error, args_validation, ErrorMsg});
             _ ->
               null
           end;
         Value ->
-          check_variable_type(Value, Type, VariableName)
+          check_variable_or_argument_type(Value, Type, ArgumentName)
       end
   end.
 
 get_field_argument_by_name(ArgumentName, ArgumentValues)->
-  Res = lists:filtermap(fun(X) ->
+  lists:filtermap(fun(X) ->
     case X of
       #{<<"value">> := #{<<"name">> := #{<<"value">> := ArgumentName}}} ->
         {true, X};
@@ -255,22 +270,7 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
       _ ->
         false
     end
-  end, ArgumentValues),
-  print("~p: Res: ~p", [?LINE, Res]),
-  case Res of
-    [] ->
-      #{};
-    [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"value">> := Value}}] ->
-      #{<<"type">> => <<"Argument">>, ArgumentName => Value};
-    [#{<<"name">> := #{<<"value">> := ArgumentName}, <<"value">> := #{<<"values">> := Values}}] ->
-      Values0 = lists:map(fun(V) ->
-        maps:get(<<"value">>, V)
-      end, Values),
-      #{<<"type">> => <<"Argument">>, ArgumentName => Values0};
-    [#{<<"value">> := #{<<"kind">> := <<"Variable">>}}] ->
-      #{<<"name">> => ArgumentName}
-  end.
-
+  end, ArgumentValues).
 
 % http://facebook.github.io/graphql/#sec-Executing-Operations
 execute_query(Query, Schema, VariableValues, InitialValue, Context) ->
