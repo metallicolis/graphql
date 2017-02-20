@@ -191,10 +191,10 @@ check_type(Value, Fun, VariableName, Type) ->
       throw({error, args_validation, ErrorMsg})
   end.
 
-
 % TODO: complete me http://facebook.github.io/graphql/#CoerceArgumentValues()
 coerceArgumentValues(ObjectType, Field, VariableValues) ->
   ArgumentValues = maps:get(arguments, Field, null),
+
   FieldName = get_field_name(Field),
   ArgumentDefinitions = graphql_schema:get_argument_definitions(FieldName, ObjectType),
   maps:fold(fun(ArgumentName, ArgumentDefinition, CoercedValues) ->
@@ -212,6 +212,7 @@ coerceArgumentValues(ObjectType, Field, VariableValues) ->
         [];
       _ ->
         get_field_argument_by_name(ArgumentName, ArgumentValues)
+
     end,
     Result = case Value of
       [] ->
