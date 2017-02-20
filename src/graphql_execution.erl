@@ -24,15 +24,15 @@ executor(Schema, Document, OperationName, VariableValues, InitialValue, Context)
   Operation = get_operation(Document, OperationName),
   CoercedVariableValues = coerceVariableValues(Schema, Operation, VariableValues),
   case Operation of
-    #{<<"operation">> := <<"query">>} ->
+    #{operation := query} ->
       execute_query(Operation, Schema, CoercedVariableValues, InitialValue, Context);
-    #{<<"operation">> := WantedOperation} ->
+    #{operation := WantedOperation} ->
       throw({error, execute, <<"Currently operation ", WantedOperation/binary, " does not support">>})
   end.
 
 % throw validation error when operation not found or document define multiple
 get_operation(Document, OperationName)->
-  Definitions = maps:get(<<"definitions">>, Document, []),
+  Definitions = maps:get(definitions, Document, []),
   case get_operation_from_definitions(Definitions, OperationName) of
     {ok, Operation} -> Operation;
     {error, Error} -> throw({error, get_operation, Error})
@@ -49,10 +49,10 @@ get_operation_from_definitions(Definitions, OperationName) ->
 % FIXME: http://facebook.github.io/graphql/#sec-Executing-Requests
 get_operation_from_definitions([], _, Operation)-> Operation;
 % when we first meet operation - continue with what name
-get_operation_from_definitions([#{<<"kind">> := <<"OperationDefinition">>, <<"operation">> := OperationName} = Operation|Tail], null, _)->
+get_operation_from_definitions([#{kind := 'OperationDefinition', operation := OperationName} = Operation|Tail], null, _)->
   get_operation_from_definitions(Tail, OperationName, Operation);
 % when we meet another operation that named like we already founded
-get_operation_from_definitions([#{<<"kind">> := <<"OperationDefinition">>, <<"operation">> := OperationName}|_], OperationName, _)->
+get_operation_from_definitions([#{kind := 'OperationDefinition', operation := OperationName}|_], OperationName, _)->
   {error, <<"Document defines multiple operations, otherwise the document is expected to only contain a single operation">>};
 get_operation_from_definitions([_|Tail], OperationName, Operation)->
   get_operation_from_definitions(Tail, OperationName, Operation).
@@ -272,7 +272,7 @@ get_field_argument_by_name(ArgumentName, ArgumentValues)->
 % http://facebook.github.io/graphql/#sec-Executing-Operations
 execute_query(Query, Schema, VariableValues, InitialValue, Context) ->
   QueryType = maps:get(query, Schema),
-  SelectionSet = maps:get(<<"selectionSet">>, Query),
+  SelectionSet = maps:get(selectionSet, Query),
 %%  Data = execute_selection_set(SelectionSet, QueryType, InitialValue, VariableValues, Context),
   Parallel = false,
   {T, Data} = timer:tc(fun execute_selection_set/6, [SelectionSet, QueryType, InitialValue, VariableValues, Context, Parallel]),
@@ -291,7 +291,7 @@ execute_selection_set(SelectionSet, ObjectType, ObjectValue, VariableValues, Con
 
   MapFun = fun({ResponseKey, Fields})->
     % 6.3 - 3.a. Let fieldName be the name of the first entry in fields.
-    #{<<"value">> := FieldName} = maps:get(<<"name">>, lists:nth(1, Fields)),
+    #{value := FieldName} = maps:get(name, lists:nth(1, Fields)),
     Field = case graphql_schema:get_field(FieldName, ObjectType) of
       undefined ->
         ErrorMsg = <<
@@ -313,17 +313,17 @@ execute_selection_set(SelectionSet, ObjectType, ObjectValue, VariableValues, Con
 
   end,
 
-  case false of
+  case Parallel of
     true -> graphql:upmap(MapFun, GroupedFieldSet, 5000);
     false -> lists:map(MapFun, GroupedFieldSet)
   end.
 
 % TODO: does not support directives and fragments(3.a, 3.b, 3.d, 3.e): http://facebook.github.io/graphql/#CollectFields()
 collect_fields(ObjectType, SelectionSet, VariableValues) ->
-  Selections = maps:get(<<"selections">>, SelectionSet),
+  Selections = maps:get(selections, SelectionSet),
   lists:foldl(fun(Selection, GroupedFields)->
     case Selection of
-      #{<<"kind">> := <<"Field">>} -> % 3.c
+      #{kind := 'Field'} -> % 3.c
         ResponseKey = get_response_key_from_selection(Selection),
         GroupForResponseKey = proplists:get_value(ResponseKey, GroupedFields, []),
 
@@ -334,8 +334,8 @@ collect_fields(ObjectType, SelectionSet, VariableValues) ->
     end
   end, [], Selections).
 
-get_response_key_from_selection(#{<<"alias">> := null, <<"name">> := #{<<"value">> := Key}}) -> Key;
-get_response_key_from_selection(#{<<"alias">> := #{<<"value">> := Key}}) -> Key.
+get_response_key_from_selection(#{alias := #{value := Key}}) -> Key;
+get_response_key_from_selection(#{name := #{value := Key}}) -> Key.
 
 executeField(ObjectType, ObjectValue, [Field|_]=Fields, FieldType, VariableValues, Context)->
   ArgumentValues = coerceArgumentValues(ObjectType, Field, VariableValues),
@@ -348,7 +348,7 @@ executeField(ObjectType, ObjectValue, [Field|_]=Fields, FieldType, VariableValue
   end.
 
 
-get_field_name(#{<<"name">> := #{<<"value">> := FieldName}}) -> FieldName.
+get_field_name(#{name := #{value := FieldName}}) -> FieldName.
 
 %%get_field_arguments(Field)->
 %%  case maps:get(<<"arguments">>, Field) of
@@ -384,16 +384,16 @@ completeValue(FieldType, Fields, Result, VariablesValues, Context)->
         _ ->
           ObjectType = ObjectTypeFun(),
           SubSelectionSet = mergeSelectionSet(Fields),
-          execute_selection_set(#{<<"selections">> => SubSelectionSet}, ObjectType, Result, VariablesValues, Context)
+          execute_selection_set(#{selections => SubSelectionSet}, ObjectType, Result, VariablesValues, Context)
       end;
     _ -> Result
   end.
 
 mergeSelectionSet(Fields)->
   lists:foldl(fun(Field, SelectionSet) ->
-    FieldSelectionSet = maps:get(<<"selectionSet">>, Field, null),
+    FieldSelectionSet = maps:get(selectionSet, Field, null),
     case FieldSelectionSet of
       null -> SelectionSet;
-      #{<<"selections">> := Selections} -> SelectionSet ++ Selections
+      #{selections := Selections} -> SelectionSet ++ Selections
     end
   end, [], Fields).
